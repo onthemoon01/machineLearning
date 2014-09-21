@@ -1,0 +1,157 @@
+---
+title: "Machine learning"
+output: html_document
+---
+
+The goal of this project is to predict the "class" of the exercise that the enthusisats practiced.
+
+## How I build my model?
+
+```{r setwd, echo= FALSE}
+setwd("~/Desktop/Computer science/Coursera machine learning/Course project")
+
+````
+
+1. Load the datas
+
+```{r download, echo=TRUE, cache=TRUE}
+## create machineProject and download the training and test set
+if(!file.exists("machineProject")) {
+        dir.create("machineProject")
+}
+
+trainingURL<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+download.file(trainingURL, destfile="./machineProject/train.csv", method="curl")
+download.file(testURL, destfile="./machineProject/test.csv", method="curl")
+
+pml.training<-read.csv("./machineProject/train.csv", na.strings = "NA")
+pml.testing<-read.csv("./machineProject/test.csv", na.strings = "NA")
+
+```
+
+
+2. Create a train set and a validation set 
+
+```{r partition, echo=TRUE, cache=TRUE}
+set.seed(1234)
+library(caret)
+inTrain <- createDataPartition(pml.training$classe, p= 0.75, list= FALSE)
+
+trainSet<-pml.training[inTrain,]
+ValSet <- pml.training[-inTrain,]
+testSet <- pml.testing
+````
+
+
+3. I did check that the different class are enough represented to build a prediction model
+
+```{r, echo=TRUE, cache=TRUE, dependson="partition"}
+
+
+a<-nrow(trainSet[trainSet$classe=="A",])
+b<-nrow(trainSet[trainSet$classe=="B",])
+c<-nrow(trainSet[trainSet$classe=="C",])
+d<-nrow(trainSet[trainSet$classe=="D",])
+e<-nrow(trainSet[trainSet$classe=="E",])
+
+summ <- as.vector(c(a,b,c,d,e))
+histo<-as.data.frame(summ)
+rownames(histo)<-c("a", "b", "c", "d", "e")
+
+library(ggplot2)
+ggplot(data=histo, aes(x=rownames(histo), y = histo$summ))+
+        geom_bar(stat= "identity", fill= "grey", colour= "red", width=.7)+
+        ylab("number of observations")+
+        xlab("classe")
+       
+
+````
+
+So A is twice as represented as the other classe, but each class is well enough represented to perform class prediction
+
+4.Discard variable with very little variation to increase prediction accuracy and also variable with more than 90% of "NA"
+
+
+```{r lowVar, echo=TRUE, cache=TRUE}
+
+## which variable have very low variance and might be discarded?
+nsv<- nearZeroVar(trainSet)
+tidyTrain<-trainSet[, -c(nsv)]
+
+## Discard columns with NA > 90% of observations
+
+veryTidyTrain <-tidyTrain[,colSums(is.na(tidyTrain[,1:length(colnames(tidyTrain))]))< (length(row.names(tidyTrain)))/100]
+
+## Make vector from name of variable to  use as predictors (excluding classe because it will be my outcome and the first 6 columns as they will confuse the random forest function)
+trainVariable<- colnames(veryTidyTrain)
+trainVariable <- trainVariable[-c(1:6,length(trainVariable))]
+
+````
+
+
+5. Then I will try and make a prediction model based on tree classification, method = randomforest.
+I didn't perform any other preprocessing of the data (such as normalization or PCA) because the tree classification usually doesn't need such preprocessing (in contrast with linear regression).
+I prefer randomForest() then train() because it is way faster then train forest.
+
+
+```{r fit, echo=TRUE, cache = TRUE}
+
+
+library(randomForest)
+fitTree<-randomForest(x=veryTidyTrain[,trainVariable], y = veryTidyTrain$classe, data = veryTidyTrain, ntree= 50)
+
+```
+
+
+# How do I estimate the out of sample error rate
+
+Now that we have a model tree, we'll try to make prediction on the validation Set (valSet) and evaluate out of sample error rate
+
+
+```{r pre, echo= TRUE, cache=TRUE}
+
+## first make the same transformation to the validation set as we did with train set
+nsv2<- nearZeroVar(ValSet)
+tidyVal<-ValSet[, -c(nsv2)]
+
+## Discard columns with NA > 90% of observations
+
+veryTidyVal <-tidyVal[,colSums(is.na(tidyVal[,1:length(colnames(tidyVal))]))< (length(row.names(tidyVal)))/100]
+veryTidyVal<-veryTidyVal[, trainVariable]
+
+````
+
+The out of sample rror rate is given my the confusion matrix.
+
+```{r predict, echo=TRUE, cache=TRUE, dependson=c("fit","pre") }
+## Predict classe in test set using our fitTree model
+classPrediction<-predict(fitTree, newdata= veryTidyVal)
+
+## Check how our prediction match reality
+confusionMatrix(data= classPrediction, reference = ValSet$classe)
+
+
+````
+
+## How did I cross-validate my tree prediction?
+
+Cross validation in managed by the "train" function, via the trainCtrl parameter. The default cross-validation is bootstrap with 25 resampling. I set it to 5 to increase computing speed.
+
+## Let's predict the outcome of the test set
+
+```{r predtest, echo=TRUE, cache=TRUE, dependson="fit"}
+
+## Make same transformation to test set as we did with training set
+nsv3<- nearZeroVar(testSet)
+tidyTest<-testSet[, -c(nsv3)]
+
+## Discard columns with NA > 90% of observations
+
+veryTidyTest <-tidyTest[,colSums(is.na(tidyTest[,1:length(colnames(tidyTest))]))< (length(row.names(tidyTest)))/100]
+veryTidyTest<-veryTidyTest[, trainVariable]
+
+## make the classe prediction on test set
+predtest<- predict(fitTree, newdata = veryTidyTest)
+knitr::kable(data.frame("test id" = c(1:20),"classe prediction" = predtest))
